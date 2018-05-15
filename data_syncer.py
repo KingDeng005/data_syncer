@@ -28,6 +28,7 @@ SYNCING = 2
 class data_syncer:
     
     def __init__(self):
+        self.root = Tk()
         self.bag_list = {} 
         self.bag_num  = 0
         self.bag_num_thres = 5
@@ -37,12 +38,6 @@ class data_syncer:
         self.sync_proc = None
         self.status = SYNC_NOT_READY
         self.sync_dst = ''
-
-        # GUI interface
-        self.root = Tk()
-        self.frame = Frame(self.root)
-        self.root.title('TuSimple Data Syncer')
-        self.root.geometry('500x300')
         self.usb_status = ''
         self.net_status = ''
         self.sync_status = ''
@@ -51,6 +46,12 @@ class data_syncer:
         self.search_usb_update()
         self.search_net_update()
         self.progressbar_update()
+ 
+        # GUI interface
+        self.frame = Frame(self.root)
+        self.root.title('TuSimple Data Syncer')
+        self.root.geometry('500x300')
+        self.root.protocol("WM_DELETE_WINDOW", self.exit)
         self.root.mainloop()
         
     def create_layout(self):
@@ -381,7 +382,11 @@ class data_syncer:
                             os.remove(path)
                         except OSError:
                             pass
-        
+
+    # close window exit
+    def exit(self):
+        self.stop_sync()
+        self.root.destroy()
 
 if __name__ == "__main__":
     _ = data_syncer()
