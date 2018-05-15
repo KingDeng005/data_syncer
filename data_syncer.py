@@ -45,7 +45,6 @@ class data_syncer:
         self.gui_update()
         self.search_usb_update()
         self.search_net_update()
-        self.progressbar_update()
  
         # GUI interface
         self.frame = Frame(self.root)
@@ -346,6 +345,7 @@ class data_syncer:
 
         # post deletion
         self.post_delete()
+        self.progressbar.grid_forget()
 
         # reset status 
         if self.get_status() == SYNCING:
@@ -359,6 +359,7 @@ class data_syncer:
         if self.sync_proc != None and self.sync_proc.poll() == None:
             self.sync_proc.terminate()
             self.set_status(SYNC_NOT_READY)
+            self.progressbar.grid_forget()
             self.sync_proc.communicate()
             if self.sync_proc.returncode in [0, 20]:
                 self.sync_status_set('stop success')
@@ -389,4 +390,8 @@ class data_syncer:
         self.root.destroy()
 
 if __name__ == "__main__":
-    _ = data_syncer()
+    try:
+        ds = data_syncer()
+    except KeyboardInterrupt:
+        print 'Program interrupted'
+        ds.exit() 
