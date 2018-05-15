@@ -6,10 +6,11 @@ import threading
 import subprocess
 import datetime
 from Tkinter import *
-from ttk import Progressbar 
+from ttk import Progressbar, Style
 import threading
+import shutil
 
-OM_BAGS_PATH = os.path.join(os.path.expanduser("~"), 'octopus_manager', 'bags')
+SYNC_SRC = os.path.join(os.path.expanduser("~"), 'octopus_manager', 'bags')
 DEV_PRE = 'Yuan'
 NETWORK_IP = '10.162.1.4'
 MOUNT_POINT = '/mnt/truenas/scratch'
@@ -18,7 +19,7 @@ MOUNT_POINT = '/mnt/truenas/scratch'
 UPDATE_FREQ = 300
 USB_FREQ    = 500
 NET_FREQ    = 2000 
-PROG_FREQ   = 5000
+PROG_FREQ   = 2000
 
 # state
 SYNC_NOT_READY = 0 
@@ -30,7 +31,8 @@ class data_syncer:
     def __init__(self):
         self.root = Tk()
         self.bag_list = {} 
-        self.bag_num  = 0
+        self.file_size = 0
+        self.bag_num = 0
         self.bag_num_thres = 5
         self.usb_model = None
         self.user = os.environ.get('USER')
@@ -51,6 +53,13 @@ class data_syncer:
         self.root.title('TuSimple Data Syncer')
         self.root.geometry('500x300')
         self.root.protocol("WM_DELETE_WINDOW", self.exit)
+        self.style = Style(self.root)
+        self.style.layout('text.Horizontal.TProgressbar',
+                     [('Horizontal.Progessbar.trough',
+                         {'children': [('Horizontal.Progressbar.pbar',
+                                        {'side':'left', 'sticky':'ns'})],
+                          'sticky': 'nswe'}),
+                         ('Horizontal.Progressbar.label', {'side':'right', 'sticky':''})])
         self.root.mainloop()
         
     def create_layout(self):
@@ -103,7 +112,7 @@ class data_syncer:
         self.sync_status_lbl.grid(column=2, row=11)
 
         # progress bar
-        self.progressbar = Progressbar(orient='horizontal', length=100, mode='determinate')
+        self.progressbar = Progressbar(orient='horizontal', length=100, mode='determinate', style='text.Horizontal.TProgressbar')
         
     def usb_status_set(self, text):
         self.usb_status = text
@@ -122,6 +131,11 @@ class data_syncer:
 
     def sync_status_config(self, text):
         self.sync_status_lbl.configure(text=text)
+
+    def prog_status_config(self, val, maximum, text):
+        self.progressbar.configure(value=val, maximum=maximum)
+        self.style.configure('text.Horizontal.TProgressbar',
+                             text=text)
 
     def start_date_get(self):
         return self.start_txt.get() 
@@ -150,7 +164,7 @@ class data_syncer:
         self.root.after(PROG_FREQ, self.progressbar_calculator)
 
     def progressbar_calculator(self):
-        if self.get_status() == SYNCING and self.bag_num != 0:
+        if self.get_status() == SYNCING and len(self.bag_list) != 0:
             self.progressbar.grid(column=1, row=12)
             finish_bag_num = 0
             for key, bag_folder in self.bag_list.iteritems():
@@ -158,10 +172,9 @@ class data_syncer:
                     path = os.path.join(self.sync_dst, key, f)
                     if os.path.exists(path):
                         finish_bag_num += len([item for item in os.listdir(path) if item.endswith('.bag')])
-            percent = int(finish_bag_num * 1. / self.bag_num * 100.)
-            print 'here is: ' + str(percent) + '%'
-            self.progressbar['value'] = percent
-            self.progressbar['maximum'] = 100
+            val = int(finish_bag_num * 1. / self.bag_num * 100.)
+            maximum = 100 
+            self.prog_status_config(val, maximum, '{}/{}'.format(val, maximum))
             self.progressbar_update()
 
     def start_button_click(self, sync_type):
@@ -218,14 +231,14 @@ class data_syncer:
             if self.get_status() != SYNCING:
                 self.search_net_update()
         except OSError:
-            print 'Unable to check the network availability'
+            print('Unable to check the network availability')
 
     # count how many bags one folder has 
     def count_bag(self, folder):
         try:
             items = os.listdir(folder)
         except OSError:
-            print 'Unable to open file: {}'.format(folder)
+            print('Unable to open file: {}'.format(folder))
             return False
         bag_num = 0
         for item in items:
@@ -238,24 +251,25 @@ class data_syncer:
         # empty the bag
         self.bag_list = {}
         # adding into bag list
-        self.bag_num = 0
         try:
-            dates = os.listdir(OM_BAGS_PATH)
+            dates = os.listdir(SYNC_SRC)
             for date in dates:
                 if date < start_date or date > end_date:
                     continue
                 self.bag_list[date] = []
-                bag_folders = os.listdir(os.path.join(OM_BAGS_PATH, date))
+                path = os.path.join(SYNC_SRC, date)
+                self.file_size += os.path.getsize(path)
+                bag_folders = os.listdir(path) 
                 for f in bag_folders:
-                    f_path = os.path.join(OM_BAGS_PATH, date, f)
+                    f_path = os.path.join(SYNC_SRC, date, f)
                     bag_num = self.count_bag(f_path)
                     if bag_num >= self.bag_num_thres:
+                        self.bag_num += bag_num
                         self.bag_list[date].append(f)
-                        self.bag_num += bag_num 
                 if len(self.bag_list[date]) == 0:
                     del(self.bag_list[date])
         except OSError as e:
-            print 'Unable to open files when adding to bag list'
+            print('Unable to open files when adding to bag list')
 
     # check user input format
     @staticmethod 
@@ -317,8 +331,11 @@ class data_syncer:
         try:
             folders = os.listdir(self.sync_dst)
         except OSError:
-            print 'Unable to open file: {}'.format(self.sync_dst)
+            print('Unable to open file: {}'.format(self.sync_dst))
             return
+
+        # sanity check
+        self.sanity_check()
 
         # start to sync bag one by one
         self.set_status(SYNCING)
@@ -329,16 +346,16 @@ class data_syncer:
                     os.mkdir(os.path.join(self.sync_dst, key))
                 except OSError:
                     self.set_status(SYNC_READY)
-                    print 'Unable to create {} under {}'.format(key, self.sync_dst)
+                    print('Unable to create {} under {}'.format(key, self.sync_dst))
                     return
             for f in f_list:
                 if self.get_status() == SYNCING: 
                     self.sync_status_set('Syncing: ' + f)
-                    cmd = ['rsync', '--progress', '-r']
-                    cmd.append(os.path.join(OM_BAGS_PATH, key, f))
+                    cmd = ['rsync', '--progress', '-r', '--append']
+                    cmd.append(os.path.join(SYNC_SRC, key, f))
                     cmd.append(os.path.join(self.sync_dst, key))
                     self.sync_proc = subprocess.Popen(cmd)
-                    std_out, _ = self.sync_proc.communicate()
+                    self.sync_proc.communicate()
                     if self.sync_proc.returncode not in [0, 20]:
                         print 'rsync progress error code: {}'.format(self.sync_proc.returncode)
                         self.sync_status_set('Syncing progress error code: {}'.format(self.sync_proc.returncode))
@@ -365,6 +382,32 @@ class data_syncer:
                 self.sync_status_set('stop success')
             self.search_usb_update()
             self.search_net_update()
+
+    # sanity check before syncing to avoid - matching the use of rsync --append
+    def sanity_check(self):
+        for key, bag_folder in self.bag_list.iteritems():
+            for f in bag_folder:
+                src_path = os.path.join(SYNC_SRC, key, f)
+                dst_path = os.path.join(self.sync_dst, key, f)
+                try:
+                    # assumption: all files in destination must be included by those in source
+                    items = os.listdir(dst_path)
+                    for item in items:
+                        s_size = os.path.getsize(os.path.join(src_path, item))
+                        d_size = os.path.getsize(os.path.join(dst_path, item))
+                        if s_size != d_size:
+                            path = os.path.join(dst_path, item)  
+                            if os.path.exists(path):
+                                try:
+                                    os.remove(path)
+                                except OSError:
+                                    shutil.rmtree(path)
+                                finally:
+                                    print 'removing {}'.format(path)
+                            else:
+                                print 'removing {} failed'.format(path)
+                except OSError:
+                    print 'Unable to do OS operation in Sanity check'
              
     # post-delete the .active bag 
     # TO-DO: include post check
@@ -388,10 +431,11 @@ class data_syncer:
     def exit(self):
         self.stop_sync()
         self.root.destroy()
+        sys.exit(0)
 
 if __name__ == "__main__":
     try:
         ds = data_syncer()
     except KeyboardInterrupt:
-        print 'Program interrupted'
+        print('Program interrupted')
         ds.exit() 
