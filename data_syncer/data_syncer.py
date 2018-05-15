@@ -433,9 +433,12 @@ class data_syncer:
         self.root.destroy()
         sys.exit(0)
 
-if __name__ == "__main__":
+def main():
     try:
         ds = data_syncer()
     except KeyboardInterrupt:
         print('Program interrupted')
         ds.exit() 
+
+if __name__ == "__main__":
+    main()
