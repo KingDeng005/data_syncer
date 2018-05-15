@@ -18,6 +18,7 @@ MOUNT_POINT = '/mnt/truenas/scratch'
 UPDATE_FREQ = 300
 USB_FREQ    = 500
 NET_FREQ    = 2000 
+PROG_FREQ   = 5000
 
 # state
 SYNC_NOT_READY = 0 
@@ -28,12 +29,14 @@ class data_syncer:
     
     def __init__(self):
         self.bag_list = {} 
+        self.bag_num  = 0
         self.bag_num_thres = 5
         self.usb_model = None
         self.user = os.environ.get('USER')
         self._lock = threading.Lock() 
         self.sync_proc = None
         self.status = SYNC_NOT_READY
+        self.sync_dst = ''
 
         # GUI interface
         self.root = Tk()
@@ -47,6 +50,7 @@ class data_syncer:
         self.gui_update()
         self.search_usb_update()
         self.search_net_update()
+        self.progressbar_update()
         self.root.mainloop()
         
     def create_layout(self):
@@ -99,7 +103,7 @@ class data_syncer:
         self.sync_status_lbl.grid(column=2, row=11)
 
         # progress bar
-        self.prog_bar = Progressbar(orient=HORIZONTAL, mode='indeterminate')
+        self.progressbar = Progressbar(orient='horizontal', length=100, mode='determinate')
         
     def usb_status_set(self, text):
         self.usb_status = text
@@ -141,6 +145,24 @@ class data_syncer:
  
     def gui_update(self):
         self.root.after(UPDATE_FREQ, self.update)
+
+    def progressbar_update(self):
+        self.root.after(PROG_FREQ, self.progressbar_calculator)
+
+    def progressbar_calculator(self):
+        if self.get_status() == SYNCING and self.bag_num != 0:
+            self.progressbar.grid(column=1, row=12)
+            finish_bag_num = 0
+            for key, bag_folder in self.bag_list.iteritems():
+                for f in bag_folder:
+                    path = os.path.join(self.sync_dst, key, f)
+                    if os.path.exists(path):
+                        finish_bag_num += len([item for item in os.listdir(path) if item.endswith('.bag')])
+            percent = int(finish_bag_num * 1. / self.bag_num * 100.)
+            print 'here is: ' + str(percent) + '%'
+            self.progressbar['value'] = percent
+            self.progressbar['maximum'] = 100
+            self.progressbar_update()
 
     def start_button_click(self, sync_type):
         if self.get_status() == SYNCING:
@@ -185,7 +207,7 @@ class data_syncer:
     # search if network is available
     def search_net(self):
         try:
-            res = os.system("ping -c 1 " + NETWORK_IP + ' > /dev/null 2>&1')
+            res = os.system("ping -c 1 " + NETWORK_IP + '> /dev/null 2>&1')
             if res == 0:
                 if os.path.ismount(MOUNT_POINT):
                     self.net_status = 'Network is ready for sync'
@@ -198,8 +220,8 @@ class data_syncer:
         except OSError:
             print 'Unable to check the network availability'
 
-    # check if a bag is valid
-    def check_valid_bag(self, folder):
+    # count how many bags one folder has 
+    def count_bag(self, folder):
         try:
             items = os.listdir(folder)
         except OSError:
@@ -209,16 +231,14 @@ class data_syncer:
         for item in items:
             if item.endswith('.bag'):
                 bag_num += 1
-        if bag_num >= self.bag_num_thres:
-            return True
-        else:
-            return False
+        return bag_num
 
     # add to bag list 
     def add_bag_list(self, start_date, end_date):
         # empty the bag
         self.bag_list = {}
         # adding into bag list
+        self.bag_num = 0
         try:
             dates = os.listdir(OM_BAGS_PATH)
             for date in dates:
@@ -228,8 +248,10 @@ class data_syncer:
                 bag_folders = os.listdir(os.path.join(OM_BAGS_PATH, date))
                 for f in bag_folders:
                     f_path = os.path.join(OM_BAGS_PATH, date, f)
-                    if self.check_valid_bag(f_path):
+                    bag_num = self.count_bag(f_path)
+                    if bag_num >= self.bag_num_thres:
                         self.bag_list[date].append(f)
+                        self.bag_num += bag_num 
                 if len(self.bag_list[date]) == 0:
                     del(self.bag_list[date])
         except OSError as e:
@@ -289,39 +311,40 @@ class data_syncer:
         
         # generate dist path
         if sync_type == 'USB':
-            sync_dst = os.path.join('/media', self.user, self.usb_model, 'import')
+            self.sync_dst = os.path.join('/media', self.user, self.usb_model, 'import')
         else:
-            sync_dst = os.path.join(MOUNT_POINT, 'data_collection')
+            self.sync_dst = os.path.join(MOUNT_POINT, 'data_collection')
         try:
-            folders = os.listdir(sync_dst)
+            folders = os.listdir(self.sync_dst)
         except OSError:
-            print 'Unable to open file: {}'.format(sync_dst)
+            print 'Unable to open file: {}'.format(self.sync_dst)
             return
 
         # start to sync bag one by one
         self.set_status(SYNCING)
+        self.progressbar_update()
         for key, f_list in self.bag_list.iteritems():
             if key not in folders:
                 try:
-                    os.mkdir(os.path.join(sync_dst, key))
+                    os.mkdir(os.path.join(self.sync_dst, key))
                 except OSError:
                     self.set_status(SYNC_READY)
-                    print 'Unable to create {} under {}'.format(key, sync_dst)
+                    print 'Unable to create {} under {}'.format(key, self.sync_dst)
                     return
             for f in f_list:
                 if self.get_status() == SYNCING: 
                     self.sync_status_set('Syncing: ' + f)
                     cmd = ['rsync', '--progress', '-r']
                     cmd.append(os.path.join(OM_BAGS_PATH, key, f))
-                    cmd.append(os.path.join(sync_dst, key))
+                    cmd.append(os.path.join(self.sync_dst, key))
                     self.sync_proc = subprocess.Popen(cmd)
-                    self.sync_proc.communicate()
+                    std_out, _ = self.sync_proc.communicate()
                     if self.sync_proc.returncode not in [0, 20]:
                         print 'rsync progress error code: {}'.format(self.sync_proc.returncode)
                         self.sync_status_set('Syncing progress error code: {}'.format(self.sync_proc.returncode))
 
         # post deletion
-        self.post_delete(sync_dst)
+        self.post_delete()
 
         # reset status 
         if self.get_status() == SYNCING:
@@ -343,11 +366,11 @@ class data_syncer:
              
     # post-delete the .active bag 
     # TO-DO: include post check
-    def post_delete(self, sync_dst):
+    def post_delete(self):
         for key, bag_folder in self.bag_list.iteritems():
             for f in bag_folder:
                 try:
-                    path = os.path.join(sync_dst, key, f)
+                    path = os.path.join(self.sync_dst, key, f)
                     items = os.listdir(path)
                 except OSError:
                     pass
