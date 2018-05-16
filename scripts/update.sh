@@ -10,6 +10,7 @@ if [ "${REMOTE_VER}" != "${LOCAL_VER}" ]; then
     rm -rf ${DS_LOCAL_PATH}
     mkdir -p ${DS_LOCAL_PATH}
     cp -r ${DS_TRUENAS_PATH} ${DS_LOCAL_PATH}/..
+    cd; cd -.
     bash ${DS_LOCAL_PATH}/scripts/install.sh
 else
     echo 'No update released yet'
