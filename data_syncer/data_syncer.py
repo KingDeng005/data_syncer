@@ -12,7 +12,7 @@ import shutil
 import logging
 import logging.config
 
-#logging.config.fileConfig(os.path.join(os.path.expanduser("~"), '.ds_config.ini' ), disable_existing_loggers=False)
+logging.config.fileConfig(os.path.join(os.path.expanduser("~"), '.ds_config.ini' ), disable_existing_loggers=False)
 SYNC_SRC = os.path.join(os.path.expanduser("~"), 'octopus_manager', 'bags')
 DEV_PRE = 'infra-az'
 NETWORK_IP = '10.162.1.4'
@@ -30,7 +30,7 @@ SYNC_READY = 1
 SYNCING = 2 
 
 class DataSyncer:
-    #_logger = logging.getLogger('DataSyncer')    
+    _logger = logging.getLogger('DataSyncer')    
     def __init__(self):
         self.root = Tk()
         self.bag_list = {} 
@@ -52,7 +52,6 @@ class DataSyncer:
         self.search_net_update()
  
         # GUI interface
-        #DataSyncer._logger.info('starting to set up the GUI...')
         self.frame = Frame(self.root)
         self.root.title('TuSimple Data Syncer')
         self.root.geometry('300x250')
@@ -64,6 +63,7 @@ class DataSyncer:
                                         {'side':'left', 'sticky':'ns'})],
                           'sticky': 'nswe'}),
                          ('Horizontal.Progressbar.label', {'side':'right', 'sticky':''})])
+        DataSyncer._logger.info('GUI layout created')
         self.root.mainloop()
         
     def create_layout(self):
@@ -188,6 +188,7 @@ class DataSyncer:
     def start_button_click(self, sync_type):
         if self.get_status() == SYNCING:
             self.sync_status_set('Unable to sync: syncing in progress')  
+            DataSyncer._logger.warn('Unable to sync: syncing in progress')
             return
         t = threading.Thread(target=self.start_sync, args=(sync_type,))
         t.start()
@@ -195,6 +196,7 @@ class DataSyncer:
     def stop_button_click(self):
         if self.get_status() != SYNCING:
             self.sync_status_set('Unable to stop: No syncing in progress')
+            DataSyncer._logger.warn('Unable to sync: No syncing in progress')
             return
         t = threading.Thread(target=self.stop_sync)
         t.start()
@@ -246,7 +248,7 @@ class DataSyncer:
         try:
             items = os.listdir(folder)
         except OSError:
-            print('Unable to open file: {}'.format(folder))
+            DataSyncer._logger.error('Unable to open file: {}'.format(folder))
             return False
         bag_num = 0
         for item in items:
@@ -278,7 +280,7 @@ class DataSyncer:
                 if len(self.bag_list[date]) == 0:
                     del(self.bag_list[date])
         except OSError as e:
-            print('Unable to open files when adding to bag list')
+            DataSyncer._logger.error('Unable to open files when adding to bag list')
 
     # check user input format
     @staticmethod 
@@ -303,17 +305,21 @@ class DataSyncer:
         prompt = 'Unable to sync: '
         if start_date == '' or end_date == '':
             self.sync_status_set(prompt + 'dates null')
+            DataSyncer._logger.error(prompt + 'dates null')
             return False
         elif not self.check_date_format(start_date) or not self.check_date_format(end_date):
             self.sync_status_set(prompt + 'format should be YYYY-MM-DD')
+            DataSyncer._logger.error(prompt + 'format should be YYYY-MM-DD')
             return False
         elif start_date > end_date:
             self.sync_status_set(prompt + 'Start date later than end date')
+            DataSyncer._logger.error(prompt + 'Start date later than end date')
             return False
         else:
             self.add_bag_list(start_date, end_date)
             if len(self.bag_list) == 0:
                 self.sync_status_set(prompt + 'No bag between these dates')
+                DataSyncer._logger.error(prompt + 'No bag between these dates')
                 return False
             else:
                 return True
@@ -340,7 +346,7 @@ class DataSyncer:
         try:
             folders = os.listdir(self.sync_dst)
         except OSError:
-            print('Unable to open file: {}'.format(self.sync_dst))
+            DataSyncer._logger.error('Unable to open file: {}'.format(self.sync_dst))
             return
 
         # sanity check
@@ -355,7 +361,7 @@ class DataSyncer:
                     os.mkdir(os.path.join(self.sync_dst, key))
                 except OSError:
                     self.set_status(SYNC_READY)
-                    print('Unable to create {} under {}'.format(key, self.sync_dst))
+                    DataSyncer._logger.error('Unable to create {} under {}'.format(key, self.sync_dst))
                     return
             for f in f_list:
                 if self.get_status() == SYNCING: 
@@ -366,8 +372,8 @@ class DataSyncer:
                     self.sync_proc = subprocess.Popen(cmd)
                     self.sync_proc.communicate()
                     if self.sync_proc.returncode not in [0, 20]:
-                        print 'rsync progress error code: {}'.format(self.sync_proc.returncode)
                         self.sync_status_set('Syncing progress error code: {}'.format(self.sync_proc.returncode))
+                        DataSyncer._logger.error('rsync progress error code: {}'.format(self.sync_proc.returncode))
 
         # post deletion
         self.post_delete()
@@ -377,6 +383,7 @@ class DataSyncer:
         if self.get_status() == SYNCING:
             self.set_status(SYNC_NOT_READY)
             self.sync_status_set(sync_type + ' sync completed')
+            DataSyncer._logger.info(sync_type + ' sync completed')
             self.search_usb_update()
             self.search_net_update()
 
@@ -412,11 +419,11 @@ class DataSyncer:
                                 except OSError:
                                     shutil.rmtree(path)
                                 finally:
-                                    print 'removing {}'.format(path)
+                                    DataSync._logger.info('removing {}'.format(path))
                             else:
-                                print 'removing {} failed'.format(path)
+                                DataSync._logger.error('removing {} failed'.format(path))
                 except OSError:
-                    print 'Unable to do OS operation in Sanity check'
+                    DataSync._logger.error('Unable to do OS operation in Sanity check')
              
     # post-delete the .active bag 
     # TO-DO: include post check
@@ -434,6 +441,7 @@ class DataSyncer:
                             path = os.path.join(path, item)
                             os.remove(path)
                         except OSError:
+                            DataSync._logger.error('Unable to remove {} in post deletion'.format(path))
                             pass
 
     # close window exit
