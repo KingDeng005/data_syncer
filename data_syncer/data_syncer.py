@@ -51,7 +51,7 @@ class data_syncer:
         # GUI interface
         self.frame = Frame(self.root)
         self.root.title('TuSimple Data Syncer')
-        self.root.geometry('500x300')
+        self.root.geometry('300x250')
         self.root.protocol("WM_DELETE_WINDOW", self.exit)
         self.style = Style(self.root)
         self.style.layout('text.Horizontal.TProgressbar',
@@ -64,52 +64,56 @@ class data_syncer:
         
     def create_layout(self):
         # usb label 
-        usb_lbl = Label(text='usb status:')
-        usb_lbl.grid(column=1, row=0)
+        usb_lbl = Label(text='usb status:', height=2)
+        usb_lbl.grid(column=0, row=0)
 
         # usb status label
-        self.usb_status_lbl = Label(text=self.usb_status)
-        self.usb_status_lbl.grid(column=2, row=1)
+        self.usb_status_lbl = Label(text=self.usb_status, height=2)
+        self.usb_status_lbl.grid(column=1, row=0)
 
         # network label 
-        net_lbl = Label(text='network status:')
-        net_lbl.grid(column=1, row=2)
+        net_lbl = Label(text='network status:', height=2)
+        net_lbl.grid(column=0, row=1)
 
         # network status label
-        self.net_status_lbl = Label(text=self.net_status)
-        self.net_status_lbl.grid(column=2, row=3)
+        self.net_status_lbl = Label(text=self.net_status, height=2)
+        self.net_status_lbl.grid(column=1, row=1)
 
         # start date label
-        start_lbl = Label(text='start date:')
-        start_lbl.grid(column=1, row=5)
+        start_lbl = Label(text='start date:', height=2)
+        start_lbl.grid(column=0, row=2)
         
         # start date text
         self.start_txt = Entry(width=12) 
-        self.start_txt.grid(column=2, row=6)
+        self.start_txt.grid(column=1, row=2)
         
         # end date label
-        end_lbl = Label(text='end date:')
-        end_lbl.grid(column=1, row=7)
+        end_lbl = Label(text='end date:', height=2)
+        end_lbl.grid(column=0, row=3)
         
         # end date text
         self.end_txt = Entry(width=12) 
-        self.end_txt.grid(column=2, row=8)
+        self.end_txt.grid(column=1, row=3)
 
         # start button
-        self.usb_button = Button(text='USB sync', command= lambda: self.start_button_click('USB'))
-        self.usb_button.grid(column=1, row=10) 
+        self.usb_button = Button(text='USB sync', height=1,  command= lambda: self.start_button_click('USB'))
+        self.usb_button.grid(column=0, row=4) 
 
         # stop button
-        self.stop_button = Button(text='stop sync', command= lambda: self.stop_button_click())
-        self.stop_button.grid(column=2, row=10) 
+        self.stop_button = Button(text='stop sync', height=1, command= lambda: self.stop_button_click())
+        self.stop_button.grid(column=1, row=4) 
 
         # start button
-        self.net_button = Button(text='Net sync', command= lambda: self.start_button_click('Net'))
-        self.net_button.grid(column=1, row=11) 
+        self.net_button = Button(text='Net sync', height=1, command= lambda: self.start_button_click('Net'))
+        self.net_button.grid(column=0, row=5) 
+        
+        # start button
+        self.exit_button = Button(text='exit', height=1, command=self.exit)
+        self.exit_button.grid(column=1, row=5) 
 
         # sync status label
-        self.sync_status_lbl = Label(text=self.sync_status)
-        self.sync_status_lbl.grid(column=2, row=11)
+        self.sync_status_lbl = Label(text=self.sync_status, width=30)
+        self.sync_status_lbl.grid(column=0, row=6, columnspan=2, rowspan=2)
 
         # progress bar
         self.progressbar = Progressbar(orient='horizontal', length=100, mode='determinate', style='text.Horizontal.TProgressbar')
