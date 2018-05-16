@@ -9,9 +9,12 @@ from Tkinter import *
 from ttk import Progressbar, Style
 import threading
 import shutil
+import logging
+import logging.config
 
+#logging.config.fileConfig(os.path.join(os.path.expanduser("~"), '.ds_config.ini' ), disable_existing_loggers=False)
 SYNC_SRC = os.path.join(os.path.expanduser("~"), 'octopus_manager', 'bags')
-DEV_PRE = 'AZ-Infra'
+DEV_PRE = 'infra-az'
 NETWORK_IP = '10.162.1.4'
 MOUNT_POINT = '/mnt/truenas/scratch'
 
@@ -26,8 +29,8 @@ SYNC_NOT_READY = 0
 SYNC_READY = 1 
 SYNCING = 2 
 
-class data_syncer:
-    
+class DataSyncer:
+    #_logger = logging.getLogger('DataSyncer')    
     def __init__(self):
         self.root = Tk()
         self.bag_list = {} 
@@ -49,6 +52,7 @@ class data_syncer:
         self.search_net_update()
  
         # GUI interface
+        #DataSyncer._logger.info('starting to set up the GUI...')
         self.frame = Frame(self.root)
         self.root.title('TuSimple Data Syncer')
         self.root.geometry('300x250')
@@ -439,7 +443,7 @@ class data_syncer:
 
 def main():
     try:
-        ds = data_syncer()
+        ds = DataSyncer()
     except KeyboardInterrupt:
         print('Program interrupted')
         ds.exit() 
