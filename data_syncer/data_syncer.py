@@ -214,6 +214,7 @@ class DataSyncer:
         try:
             devs = os.listdir(dev_path)
             for dev in devs:
+                _dev = dev.lower()
                 if DEV_PRE in dev:
                     dev_name = dev
             if dev_name:
