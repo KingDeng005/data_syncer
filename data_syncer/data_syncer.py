@@ -259,6 +259,7 @@ class DataSyncer:
         # empty the bag
         self.bag_list = {}
         # adding into bag list
+        self.bag_num = 0
         try:
             dates = os.listdir(SYNC_SRC)
             for date in dates:
