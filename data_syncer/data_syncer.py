@@ -296,6 +296,8 @@ class DataSyncer:
     def check_dst_condition(self, sync_type):
         condition = self.usb_model if sync_type == 'USB' else self.net_status
         if not condition:
+            self.sync_status_set('Unable to sync: {} is not avaible'.format(sync_type))
+            DataSyncer._logger.error('Unable to sync: {} is not avaible'.format(sync_type))
             return False
         return True
 
