@@ -11,7 +11,7 @@ import threading
 import shutil
 
 SYNC_SRC = os.path.join(os.path.expanduser("~"), 'octopus_manager', 'bags')
-DEV_PRE = 'Yuan'
+DEV_PRE = 'AZ-Infra'
 NETWORK_IP = '10.162.1.4'
 MOUNT_POINT = '/mnt/truenas/scratch'
 
