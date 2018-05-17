@@ -11,6 +11,7 @@ import threading
 import shutil
 import logging
 import logging.config
+from dataset_store import Dataset
 
 logging.config.fileConfig(os.path.join(os.path.expanduser("~"), '.ds_config.ini' ), disable_existing_loggers=False)
 SYNC_SRC = os.path.join(os.path.expanduser("~"), 'octopus_manager', 'bags')
@@ -35,8 +36,7 @@ class DataSyncer:
     _logger = logging.getLogger('DataSyncer')    
     def __init__(self):
         self.root = Tk()
-        self.bag_list = {}
-        self.bag_num = 0
+        self.file_list = {}
         self.bag_num_thres = 4
         self.file_size = 0
         self.usb_model = None
@@ -176,27 +176,23 @@ class DataSyncer:
         self.root.after(PROG_FREQ, self.progressbar_calculator)
 
     def progressbar_calculator(self):
-        if self.get_status() == SYNCING and len(self.bag_list) != 0:
+        if self.get_status() == SYNCING and len(self.file_list) != 0:
             self.progressbar.grid(column=1, row=12)
-            # finish_bag_num = 0
             finish_size = 0
-            for key, bag_folder in self.bag_list.iteritems():
-                for f in bag_folder:
-                    path = os.path.join(self.sync_dst, key, f)
-                    if os.path.exists(path):
-                        # finish_bag_num += len([item for item in os.listdir(path) if item.endswith('.bag')])
-                        try:
-                            finish_size += self.get_size(path)
-                        except OSError:
-                            DataSyncer._logger.error('Unable to get size at {}'.format(path))
-            # val = int(finish_bag_num * 1. / self.bag_num * 100.)
+            for key in self.file_list.keys():
+                path = os.path.join(self.sync_dst, key)
+                if os.path.exists(path):
+                    try:
+                        finish_size += self.get_size(path)
+                    except OSError:
+                        DataSyncer._logger.error('Unable to get size at {}'.format(path))
             val = finish_size * 1. / self.file_size * 100
             maximum = 100 
             self.prog_status_config(val, maximum, '{}/{}'.format(int(val), maximum))
             self.progressbar_update()
 
     def start_button_click(self, sync_type):
-        if self.sync_thread != None and self.sync_thread.isAlive():
+        if self.get_status() == SYNCING or (self.sync_thread != None and self.sync_thread.isAlive()):
             self.sync_status_set('Unable to sync: syncing in progress')  
             DataSyncer._logger.warn('Unable to sync: syncing in progress')
             return
@@ -204,9 +200,15 @@ class DataSyncer:
         self.sync_thread.start()
 
     def stop_button_click(self):
+        '''
         if self.stop_thread != None and self.stop_thread.isAlive(): 
-            self.sync_status_set('Unable to stop: No syncing in progress')
-            DataSyncer._logger.warn('Unable to sync: No syncing in progress')
+            self.sync_status_set('Unable to stop: stopping now')
+            DataSyncer._logger.warn('Unable to sync: stopping now')
+            return
+        '''
+        if self.get_status() != SYNCING:
+            self.sync_status_set('Unable to stop: no syncing in progress')
+            DataSyncer._logger.warn('Unable to sync: no syncing in progress')
             return
         self.stop_thread = threading.Thread(target=self.stop_sync)
         self.stop_thread.start()
@@ -219,7 +221,6 @@ class DataSyncer:
         if self.sync_thread != None and self.sync_thread.isAlive() and self.get_status() in [SYNC_NOT_READY, SYNC_STOPPING]:
             self.sync_thread.join()
             DataSyncer._logger.info('sync thread joined!')
-            self.progressbar.grid_forget()
         if self.stop_thread != None and self.stop_thread.isAlive() and self.get_status() in [SYNC_NOT_READY]:
             self.stop_thread.join()
             DataSyncer._logger.info('stop thread joined!')
@@ -261,6 +262,16 @@ class DataSyncer:
         except OSError:
             print('Unable to check the network availability')
 
+    # check file list
+    def check_file_type(self, path):
+        items = os.listdir(path)
+        if 'top.json' in items:
+            return 'dataset'
+        elif 'record.json' in items or 'log' in items:
+            return 'bag'
+        else:
+            return None
+        
     # count how many bags one folder has 
     def count_bag(self, folder):
         try:
@@ -276,28 +287,35 @@ class DataSyncer:
 
     # add to bag list 
     def add_file_list(self, start_date, end_date):
-        # empty the bag
-        self.bag_list = {}
+        # empty the file list 
+        self.file_list = {}
         self.file_size = 0
-        # self.bag_num = 0
-        # adding into bag list
+        # adding into file list
         try:
             dates = os.listdir(SYNC_SRC)
             for date in dates:
                 if date < start_date or date > end_date:
                     continue
-                self.bag_list[date] = []
+                self.file_list[date] = {} 
                 path = os.path.join(SYNC_SRC, date)
                 self.file_size += self.get_size(path)
                 bag_folders = os.listdir(path) 
                 for f in bag_folders:
                     f_path = os.path.join(SYNC_SRC, date, f)
-                    bag_num = self.count_bag(f_path)
-                    if bag_num >= self.bag_num_thres:
-                        self.bag_num += bag_num
-                        self.bag_list[date].append(f)
-                if len(self.bag_list[date]) == 0:
-                    del(self.bag_list[date])
+                    file_type = self.check_file_type(f_path)
+                    if file_type == 'dataset':
+                        ds = Dataset(f_path)
+                        _t = (ds.meta['ts_end'] - ds.meta['ts_begin']) * 1. / 1e9 / 60
+                        if _t > self.bag_num_thres * 1:
+                            self.file_list[date][f] = 'dataset'
+                    elif file_type == 'bag':
+                        bag_num = self.count_bag(f_path)
+                        if bag_num >= self.bag_num_thres:
+                            self.file_list[date][f] = 'bag'
+                    else:
+                        DataSyncer._logger.warn('{} is not a data folder'.format(f_path))
+                if len(self.file_list[date]) == 0:
+                    del(self.file_list[date])
         except OSError as e:
             DataSyncer._logger.error('Unable to open files when adding to bag list')
 
@@ -338,7 +356,7 @@ class DataSyncer:
             return False
         else:
             self.add_file_list(start_date, end_date)
-            if len(self.bag_list) == 0:
+            if len(self.file_list) == 0:
                 self.sync_status_set(prompt + 'No bag between these dates')
                 DataSyncer._logger.error(prompt + 'No bag between these dates')
                 return False
@@ -359,11 +377,14 @@ class DataSyncer:
         if self.get_status() == SYNC_NOT_READY:
             return
         
+        self.set_status(SYNCING)
         # generate dist path
         if sync_type == 'USB':
-            self.sync_dst = os.path.join('/media', self.user, self.usb_model, 'import')
+            self.sync_dst_bag = os.path.join('/media', self.user, self.usb_model, 'import')
+            self.sync_dst_dateset = os.path.join('/media', self.user, self.usb_model, 'import')
         else:
-            self.sync_dst = os.path.join(BAG_MOUNT_POINT, 'data_collection')
+            self.sync_dst_bag = os.path.join(BAG_MOUNT_POINT, 'data_collection')
+            self.sync_dst_dataset = DATASET_MOUNT_POINT
         try:
             folders = os.listdir(self.sync_dst)
         except OSError:
@@ -371,12 +392,12 @@ class DataSyncer:
             return
 
         # sanity check
+        self.sync_status_set('Sanity check..please wait')
         self.sanity_check()
 
         # start to sync bag one by one
-        self.set_status(SYNCING)
         self.progressbar_update()
-        for key, f_list in self.bag_list.iteritems():
+        for key, f_list in self.file_list.iteritems():
             if key not in folders:
                 try:
                     os.mkdir(os.path.join(self.sync_dst, key))
@@ -384,12 +405,13 @@ class DataSyncer:
                     self.set_status(SYNC_READY)
                     DataSyncer._logger.error('Unable to create {} under {}'.format(key, self.sync_dst))
                     return
-            for f in f_list:
+            for f in f_list.keys():
                 if self.get_status() == SYNCING: 
                     self.sync_status_set('Syncing: ' + f)
                     cmd = ['rsync', '--progress', '-r', '--append']
                     cmd.append(os.path.join(SYNC_SRC, key, f))
-                    cmd.append(os.path.join(self.sync_dst, key))
+                    sync_dst = self.sync_dst_bag if f_list[f] == 'bag' else self.sync_dst_dataset
+                    cmd.append(os.path.join(sync_dst, key))
                     self.sync_proc = subprocess.Popen(cmd)
                     self.sync_proc.communicate()
                     if self.sync_proc.returncode not in [0, 20]:
@@ -399,12 +421,14 @@ class DataSyncer:
 
         # post deletion
         self.post_delete()
+        self.progressbar.grid_forget()
 
         # reset status 
         if self.get_status() == SYNCING:
             self.set_status(SYNC_NOT_READY)
-            self.sync_status_set(sync_type + ' sync completed')
-            DataSyncer._logger.info(sync_type + ' sync completed')
+            if self.sync_proc.returncode in [0, 20]:
+                self.sync_status_set(sync_type + ' sync completed')
+                DataSyncer._logger.info(sync_type + ' sync completed')
             self.search_usb_update()
             self.search_net_update()
 
@@ -413,7 +437,6 @@ class DataSyncer:
         if self.sync_proc != None and self.sync_proc.poll() == None:
             self.sync_proc.terminate()
             self.set_status(SYNC_STOPPING)
-            self.progressbar.grid_forget()
             self.sync_proc.communicate()
             if self.sync_proc.returncode in [0, 20]:
                 self.sync_status_set('stop success')
@@ -423,48 +446,46 @@ class DataSyncer:
 
     # sanity check before syncing to avoid - matching the use of rsync --append
     def sanity_check(self):
-        for key, bag_folder in self.bag_list.iteritems():
-            for f in bag_folder:
-                src_path = os.path.join(SYNC_SRC, key, f)
-                dst_path = os.path.join(self.sync_dst, key, f)
+        for key, bag_folder in self.file_list.iteritems():
+            for f in bag_folder.keys():
                 try:
                     # assumption: all files in destination must be included by those in source
-                    items = os.listdir(dst_path)
+                    sync_dst = self.sync_dst_bag if bag_folder[f] == 'bag' else self.sync_dst_dataset
+                    items = os.listdir(os.path.join(sync_dst, key, f))
                     for item in items:
-                        s_size = self.get_size(os.path.join(src_path, item))
-                        d_size = self.get_size(os.path.join(dst_path, item))
+                        src_path = os.path.join(SYNC_SRC, key, f, item)
+                        dst_path = os.path.join(self.sync_dst, key, f, item)
+                        if os.path.isfile(dst_path):
+                            s_size = self.get_file_size(src_path)
+                            d_size = self.get_file_size(dst_path)
+                        else:
+                            s_size = self.get_dir_size(src_path)
+                            d_size = self.get_dir_size(dst_path)
                         if s_size != d_size:
-                            path = os.path.join(dst_path, item)  
-                            if os.path.exists(path):
-                                try:
-                                    os.remove(path)
-                                except OSError:
-                                    shutil.rmtree(path)
-                                finally:
-                                    DataSyncer._logger.info('removing {}'.format(path))
-                            else:
-                                DataSyncer._logger.error('removing {} failed'.format(path))
+                            try:
+                                os.remove(dst_path)
+                            except OSError:
+                                shutil.rmtree(dst_path)
+                            finally:
+                                DataSyncer._logger.warn('removed {}'.format(dst_path))
                 except OSError:
                     DataSyncer._logger.error('Unable to do OS operation in Sanity check')
              
     # post-delete the .active bag 
     # TO-DO: include post check
     def post_delete(self):
-        for key, bag_folder in self.bag_list.iteritems():
-            for f in bag_folder:
+        for key, bag_folder in self.file_list.iteritems():
+            for f in bag_folder.keys():
                 try:
                     path = os.path.join(self.sync_dst, key, f)
-                    items = os.listdir(path)
+                    if bag_folder[f] == 'bag':
+                        items = os.listdir(path)
+                        for item in items:
+                            if item.endswith('.active'):
+                                path = os.path.join(path, item)
+                                os.remove(path)
                 except OSError:
-                    pass
-                for item in items:
-                    if item.endswith('.active'):
-                        try:
-                            path = os.path.join(path, item)
-                            os.remove(path)
-                        except OSError:
-                            DataSyncer._logger.error('Unable to remove {} in post deletion'.format(path))
-                            pass
+                    DataSyncer._logger.error('Unable to do OS operation in post delete')
 
     # wait threads finish
     def wait_thread(self):
@@ -481,10 +502,21 @@ class DataSyncer:
         self.root.destroy()
         sys.exit()
 
-    # get folder size in KB
-    @staticmethod
-    def get_size(path):
+    # get folder size in KB in general
+    def get_size(self, path):
         return int(subprocess.check_output(['du', '-s', path]).split()[0])
+
+    # calculate file's logical size
+    def get_file_size(self, path):
+        return int(subprocess.check_output(['ls', '-l', path]).split()[4])
+
+    # calculate folde'r logical size
+    def get_dir_size(self, path):
+        size = 0
+        for item in os.listdir(path):
+            item_path = os.path.join(path, item)
+            size += self.get_file_size(item_path) if os.path.isfile(item_path) else self.get_dir_size(item_path)
+        return int(size)
 
 def main():
     try:
