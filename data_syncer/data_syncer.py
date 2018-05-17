@@ -14,9 +14,10 @@ import logging.config
 
 logging.config.fileConfig(os.path.join(os.path.expanduser("~"), '.ds_config.ini' ), disable_existing_loggers=False)
 SYNC_SRC = os.path.join(os.path.expanduser("~"), 'octopus_manager', 'bags')
-DEV_PRE = 'infra-az'
+DEV_PRE = 'yuan'
 NETWORK_IP = '10.162.1.4'
-MOUNT_POINT = '/mnt/truenas/scratch'
+DATASET_MOUNT_POINT = '/mnt/truenas/datasets/v2'
+BAG_MOUNT_POINT = '/mnt/truenas/scratch'
 
 # timer frequency
 UPDATE_FREQ = 300
@@ -28,19 +29,22 @@ PROG_FREQ   = 2000
 SYNC_NOT_READY = 0 
 SYNC_READY = 1 
 SYNCING = 2 
+SYNC_STOPPING = 3
 
 class DataSyncer:
     _logger = logging.getLogger('DataSyncer')    
     def __init__(self):
         self.root = Tk()
-        self.bag_list = {} 
-        self.file_size = 0
+        self.bag_list = {}
         self.bag_num = 0
-        self.bag_num_thres = 5
+        self.bag_num_thres = 4
+        self.file_size = 0
         self.usb_model = None
         self.user = os.environ.get('USER')
         self._lock = threading.Lock() 
         self.sync_proc = None
+        self.sync_thread = None
+        self.stop_thread = None
         self.status = SYNC_NOT_READY
         self.sync_dst = ''
         self.usb_status = ''
@@ -174,38 +178,51 @@ class DataSyncer:
     def progressbar_calculator(self):
         if self.get_status() == SYNCING and len(self.bag_list) != 0:
             self.progressbar.grid(column=1, row=12)
-            finish_bag_num = 0
+            # finish_bag_num = 0
+            finish_size = 0
             for key, bag_folder in self.bag_list.iteritems():
                 for f in bag_folder:
                     path = os.path.join(self.sync_dst, key, f)
                     if os.path.exists(path):
-                        finish_bag_num += len([item for item in os.listdir(path) if item.endswith('.bag')])
-            val = int(finish_bag_num * 1. / self.bag_num * 100.)
+                        # finish_bag_num += len([item for item in os.listdir(path) if item.endswith('.bag')])
+                        try:
+                            finish_size += self.get_size(path)
+                        except OSError:
+                            DataSyncer._logger.error('Unable to get size at {}'.format(path))
+            # val = int(finish_bag_num * 1. / self.bag_num * 100.)
+            val = finish_size * 1. / self.file_size * 100
             maximum = 100 
-            self.prog_status_config(val, maximum, '{}/{}'.format(val, maximum))
+            self.prog_status_config(val, maximum, '{}/{}'.format(int(val), maximum))
             self.progressbar_update()
 
     def start_button_click(self, sync_type):
-        if self.get_status() == SYNCING:
+        if self.sync_thread != None and self.sync_thread.isAlive():
             self.sync_status_set('Unable to sync: syncing in progress')  
             DataSyncer._logger.warn('Unable to sync: syncing in progress')
             return
-        t = threading.Thread(target=self.start_sync, args=(sync_type,))
-        t.start()
+        self.sync_thread = threading.Thread(target=self.start_sync, args=(sync_type,))
+        self.sync_thread.start()
 
     def stop_button_click(self):
-        if self.get_status() != SYNCING:
+        if self.stop_thread != None and self.stop_thread.isAlive(): 
             self.sync_status_set('Unable to stop: No syncing in progress')
             DataSyncer._logger.warn('Unable to sync: No syncing in progress')
             return
-        t = threading.Thread(target=self.stop_sync)
-        t.start()
+        self.stop_thread = threading.Thread(target=self.stop_sync)
+        self.stop_thread.start()
 
     def update(self):
         self.usb_status_config(self.usb_status)
         self.net_status_config(self.net_status)
         self.sync_status_config(self.sync_status)
         self.gui_update()
+        if self.sync_thread != None and self.sync_thread.isAlive() and self.get_status() in [SYNC_NOT_READY, SYNC_STOPPING]:
+            self.sync_thread.join()
+            DataSyncer._logger.info('sync thread joined!')
+            self.progressbar.grid_forget()
+        if self.stop_thread != None and self.stop_thread.isAlive() and self.get_status() in [SYNC_NOT_READY]:
+            self.stop_thread.join()
+            DataSyncer._logger.info('stop thread joined!')
 
     # check if usb is availble
     def search_usb(self):
@@ -215,7 +232,7 @@ class DataSyncer:
             devs = os.listdir(dev_path)
             for dev in devs:
                 _dev = dev.lower()
-                if DEV_PRE in dev:
+                if DEV_PRE in _dev:
                     dev_name = dev
             if dev_name:
                 self.usb_status = 'USB detected: {}'.format(dev)
@@ -233,7 +250,7 @@ class DataSyncer:
         try:
             res = os.system("ping -c 1 " + NETWORK_IP + '> /dev/null 2>&1')
             if res == 0:
-                if os.path.ismount(MOUNT_POINT):
+                if os.path.ismount(BAG_MOUNT_POINT):
                     self.net_status = 'Network is ready for sync'
                 else:
                     self.net_status = 'Mount point unfound'
@@ -258,11 +275,12 @@ class DataSyncer:
         return bag_num
 
     # add to bag list 
-    def add_bag_list(self, start_date, end_date):
+    def add_file_list(self, start_date, end_date):
         # empty the bag
         self.bag_list = {}
+        self.file_size = 0
+        # self.bag_num = 0
         # adding into bag list
-        self.bag_num = 0
         try:
             dates = os.listdir(SYNC_SRC)
             for date in dates:
@@ -270,7 +288,7 @@ class DataSyncer:
                     continue
                 self.bag_list[date] = []
                 path = os.path.join(SYNC_SRC, date)
-                self.file_size += os.path.getsize(path)
+                self.file_size += self.get_size(path)
                 bag_folders = os.listdir(path) 
                 for f in bag_folders:
                     f_path = os.path.join(SYNC_SRC, date, f)
@@ -319,7 +337,7 @@ class DataSyncer:
             DataSyncer._logger.error(prompt + 'Start date later than end date')
             return False
         else:
-            self.add_bag_list(start_date, end_date)
+            self.add_file_list(start_date, end_date)
             if len(self.bag_list) == 0:
                 self.sync_status_set(prompt + 'No bag between these dates')
                 DataSyncer._logger.error(prompt + 'No bag between these dates')
@@ -345,7 +363,7 @@ class DataSyncer:
         if sync_type == 'USB':
             self.sync_dst = os.path.join('/media', self.user, self.usb_model, 'import')
         else:
-            self.sync_dst = os.path.join(MOUNT_POINT, 'data_collection')
+            self.sync_dst = os.path.join(BAG_MOUNT_POINT, 'data_collection')
         try:
             folders = os.listdir(self.sync_dst)
         except OSError:
@@ -378,9 +396,9 @@ class DataSyncer:
                         self.sync_status_set('Syncing progress error code: {}'.format(self.sync_proc.returncode))
                         DataSyncer._logger.error('rsync progress error code: {}'.format(self.sync_proc.returncode))
 
+
         # post deletion
         self.post_delete()
-        self.progressbar.grid_forget()
 
         # reset status 
         if self.get_status() == SYNCING:
@@ -394,13 +412,14 @@ class DataSyncer:
     def stop_sync(self):
         if self.sync_proc != None and self.sync_proc.poll() == None:
             self.sync_proc.terminate()
-            self.set_status(SYNC_NOT_READY)
+            self.set_status(SYNC_STOPPING)
             self.progressbar.grid_forget()
             self.sync_proc.communicate()
             if self.sync_proc.returncode in [0, 20]:
                 self.sync_status_set('stop success')
             self.search_usb_update()
             self.search_net_update()
+            self.set_status(SYNC_NOT_READY)
 
     # sanity check before syncing to avoid - matching the use of rsync --append
     def sanity_check(self):
@@ -412,8 +431,8 @@ class DataSyncer:
                     # assumption: all files in destination must be included by those in source
                     items = os.listdir(dst_path)
                     for item in items:
-                        s_size = os.path.getsize(os.path.join(src_path, item))
-                        d_size = os.path.getsize(os.path.join(dst_path, item))
+                        s_size = self.get_size(os.path.join(src_path, item))
+                        d_size = self.get_size(os.path.join(dst_path, item))
                         if s_size != d_size:
                             path = os.path.join(dst_path, item)  
                             if os.path.exists(path):
@@ -422,11 +441,11 @@ class DataSyncer:
                                 except OSError:
                                     shutil.rmtree(path)
                                 finally:
-                                    DataSync._logger.info('removing {}'.format(path))
+                                    DataSyncer._logger.info('removing {}'.format(path))
                             else:
-                                DataSync._logger.error('removing {} failed'.format(path))
+                                DataSyncer._logger.error('removing {} failed'.format(path))
                 except OSError:
-                    DataSync._logger.error('Unable to do OS operation in Sanity check')
+                    DataSyncer._logger.error('Unable to do OS operation in Sanity check')
              
     # post-delete the .active bag 
     # TO-DO: include post check
@@ -444,14 +463,28 @@ class DataSyncer:
                             path = os.path.join(path, item)
                             os.remove(path)
                         except OSError:
-                            DataSync._logger.error('Unable to remove {} in post deletion'.format(path))
+                            DataSyncer._logger.error('Unable to remove {} in post deletion'.format(path))
                             pass
+
+    # wait threads finish
+    def wait_thread(self):
+        while True:
+            if (self.sync_thread != None and self.sync_thread.isAlive()) or (self.stop_thread != None and self.stop_thread.isAlive()):
+                continue
+            else:
+                break
 
     # close window exit
     def exit(self):
         self.stop_sync()
+        self.wait_thread()
         self.root.destroy()
-        sys.exit(0)
+        sys.exit()
+
+    # get folder size in KB
+    @staticmethod
+    def get_size(path):
+        return int(subprocess.check_output(['du', '-s', path]).split()[0])
 
 def main():
     try:
