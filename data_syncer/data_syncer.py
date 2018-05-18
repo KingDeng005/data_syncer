@@ -18,7 +18,7 @@ import math
 
 logging.config.fileConfig(os.path.join(os.path.expanduser("~"), '.data_syncer', 'ds_config.ini' ), disable_existing_loggers=False)
 SYNC_SRC = os.path.join(os.path.expanduser("~"), 'octopus_manager', 'bags')
-DEV_PRE = 'A235'
+DEV_PRE = 'infra-az'
 NETWORK_IP = '10.162.1.4'
 DATASET_MOUNT_POINT = '/mnt/truenas/datasets/v2'
 BAG_MOUNT_POINT = '/mnt/truenas/scratch'
@@ -41,7 +41,7 @@ class DataSyncer:
     def __init__(self):
         self.root = Tk()
         self.file_list = {}
-        self.bag_num_thres = 4
+        self.bag_num_thres = 5
         self.file_size = 0
         self.finish_size = 0
         self.usb_model = None
@@ -349,7 +349,7 @@ class DataSyncer:
                     if file_type == 'dataset':
                         ds = Dataset(f_path)
                         _t = (ds.meta['ts_end'] - ds.meta['ts_begin']) * 1. / 1e9 / 60
-                        if _t > self.bag_num_thres * 1:
+                        if _t > self.bag_num_thres * 5:
                             self.file_list[date][f] = 'dataset'
                     elif file_type == 'bag':
                         bag_num = self.count_bag(f_path)
