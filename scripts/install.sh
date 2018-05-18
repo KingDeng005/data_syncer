@@ -13,7 +13,7 @@ sudo pip install . -U
 cp ${ASSET_DIR}/data_sync.desktop ~/Desktop/
 
 # create dot folder for log/config
-cd; test -d .data_syncer || (mkdir .data_syncer && cp ${TOP_DIR}/data_syncer/config.ini $HOME/.data_syncer/ds_config.ini)
+cd; test -d .data_syncer || (mkdir .data_syncer && cp ${ASSET_DIR}/config.ini $HOME/.data_syncer/ds_config.ini)
 
 # set up quick update
 echo "Icon=${ASSET_DIR}/data_sync.png" >> ~/Desktop/data_sync.desktop
