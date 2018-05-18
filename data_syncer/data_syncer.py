@@ -286,7 +286,7 @@ class DataSyncer:
             if self.get_status() != SYNCING:
                 self.search_usb_update()
         except OSError:
-            self.usb_status = 'No USB found'
+            self.usb_status = '{} USB not found'.format(DEV_PRE)
             self.usb_model = None
             
     # search if network is available
@@ -423,14 +423,14 @@ class DataSyncer:
         self.set_status(SYNCING)
         # generate dist path
         if sync_type == 'USB':
-            self.sync_dst_bag = os.path.join('/media', USER, self.usb_model, 'import')
-            self.sync_dst_dataset = os.path.join('/media', USER, self.usb_model, 'import')
+            self.sync_dst_bag = self.sync_dst_dataset = os.path.join('/media', USER, self.usb_model, 'import')
         else:
             self.sync_dst_bag = os.path.join(BAG_MOUNT_POINT, 'data_collection')
             self.sync_dst_dataset = DATASET_MOUNT_POINT
         try:
             folders = os.listdir(self.sync_dst_bag)
         except OSError:
+            self.sync_status_set('No such path: {}'.format(self.sync_dst_bag))
             DataSyncer._logger.error('Unable to open file: {}'.format(self.sync_dst_bag))
             return
 
