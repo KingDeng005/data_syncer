@@ -7,18 +7,21 @@ import subprocess
 import datetime
 from Tkinter import *
 from ttk import Progressbar, Style
+import tkFont
 import threading
 import shutil
 import logging
 import logging.config
 from dataset_store import Dataset
+import time
 
-logging.config.fileConfig(os.path.join(os.path.expanduser("~"), '.ds_config.ini' ), disable_existing_loggers=False)
+logging.config.fileConfig(os.path.join(os.path.expanduser("~"), '.data_syncer', 'ds_config.ini' ), disable_existing_loggers=False)
 SYNC_SRC = os.path.join(os.path.expanduser("~"), 'octopus_manager', 'bags')
 DEV_PRE = 'yuan'
 NETWORK_IP = '10.162.1.4'
 DATASET_MOUNT_POINT = '/mnt/truenas/datasets/v2'
 BAG_MOUNT_POINT = '/mnt/truenas/scratch'
+USER = os.environ.get('USER')
 
 # timer frequency
 UPDATE_FREQ = 300
@@ -30,7 +33,7 @@ PROG_FREQ   = 2000
 SYNC_NOT_READY = 0 
 SYNC_READY = 1 
 SYNCING = 2 
-SYNC_STOPPING = 3
+EXIT = 3
 
 class DataSyncer:
     _logger = logging.getLogger('DataSyncer')    
@@ -40,25 +43,21 @@ class DataSyncer:
         self.bag_num_thres = 4
         self.file_size = 0
         self.usb_model = None
-        self.user = os.environ.get('USER')
         self._lock = threading.Lock() 
         self.sync_proc = None
         self.sync_thread = None
         self.stop_thread = None
         self.status = SYNC_NOT_READY
-        self.sync_dst = ''
+        self.sync_dst_bag = ''
+        self.sync_dst_dataset = ''
         self.usb_status = ''
         self.net_status = ''
         self.sync_status = ''
-        self.create_layout()
-        self.gui_update()
-        self.search_usb_update()
-        self.search_net_update()
- 
+
         # GUI interface
         self.frame = Frame(self.root)
         self.root.title('TuSimple Data Syncer')
-        self.root.geometry('300x250')
+        self.root.geometry('500x700')
         self.root.protocol("WM_DELETE_WINDOW", self.exit)
         self.style = Style(self.root)
         self.style.layout('text.Horizontal.TProgressbar',
@@ -67,64 +66,69 @@ class DataSyncer:
                                         {'side':'left', 'sticky':'ns'})],
                           'sticky': 'nswe'}),
                          ('Horizontal.Progressbar.label', {'side':'right', 'sticky':''})])
+        self.font_size = tkFont.Font(family='Times New Roman', size=15)
+        self.create_layout()
+        self.gui_update()
+        self.search_usb_update()
+        self.search_net_update()
         DataSyncer._logger.info('GUI layout created')
         self.root.mainloop()
         
     def create_layout(self):
         # usb label 
-        usb_lbl = Label(text='usb status:', height=2)
+        usb_lbl = Label(text='usb status:', height=4, width=20, font=self.font_size)
         usb_lbl.grid(column=0, row=0)
 
         # usb status label
-        self.usb_status_lbl = Label(text=self.usb_status, height=2)
+        self.usb_status_lbl = Label(text=self.usb_status, height=4, width=20, font=self.font_size)
         self.usb_status_lbl.grid(column=1, row=0)
 
         # network label 
-        net_lbl = Label(text='network status:', height=2)
+        net_lbl = Label(text='network status:', height=4, width=20, font=self.font_size)
         net_lbl.grid(column=0, row=1)
 
         # network status label
-        self.net_status_lbl = Label(text=self.net_status, height=2)
+        self.net_status_lbl = Label(text=self.net_status, height=4, font=self.font_size)
         self.net_status_lbl.grid(column=1, row=1)
 
         # start date label
-        start_lbl = Label(text='start date:', height=2)
+        start_lbl = Label(text='start date:', height=4, font=self.font_size)
         start_lbl.grid(column=0, row=2)
         
         # start date text
-        self.start_txt = Entry(width=12) 
+        self.start_txt = Entry(width=25, font=self.font_size) 
         self.start_txt.grid(column=1, row=2)
         
         # end date label
-        end_lbl = Label(text='end date:', height=2)
+        end_lbl = Label(text='end date:', height=4, font=self.font_size)
         end_lbl.grid(column=0, row=3)
         
         # end date text
-        self.end_txt = Entry(width=12) 
+        self.end_txt = Entry(width=25, font=self.font_size) 
         self.end_txt.grid(column=1, row=3)
 
         # start button
-        self.usb_button = Button(text='USB sync', height=1,  command= lambda: self.start_button_click('USB'))
-        self.usb_button.grid(column=0, row=4) 
+        self.usb_button = Button(text='USB sync', height=3,  command= lambda: self.start_button_click('USB'), font=self.font_size)
+        self.usb_button.grid(column=0, row=4, sticky=N+S+E+W) 
 
         # stop button
-        self.stop_button = Button(text='stop sync', height=1, command= lambda: self.stop_button_click())
-        self.stop_button.grid(column=1, row=4) 
+        self.stop_button = Button(text='stop sync', height=3, command= lambda: self.stop_button_click(), font=self.font_size)
+        self.stop_button.grid(column=1, row=4, sticky=N+S+E+W) 
 
         # start button
-        self.net_button = Button(text='Net sync', height=1, command= lambda: self.start_button_click('Net'))
-        self.net_button.grid(column=0, row=5) 
+        self.net_button = Button(text='Net sync', height=3, command= lambda: self.start_button_click('Net'), font=self.font_size)
+        self.net_button.grid(column=0, row=5, sticky=N+S+E+W) 
         
         # start button
-        self.exit_button = Button(text='exit', height=1, command=self.exit)
-        self.exit_button.grid(column=1, row=5) 
+        self.exit_button = Button(text='exit', height=3, command=self.exit, font=self.font_size)
+        self.exit_button.grid(column=1, row=5, sticky=N+S+E+W) 
 
         # sync status label
-        self.sync_status_lbl = Label(text=self.sync_status, width=30)
+        self.sync_status_lbl = Label(text=self.sync_status, width=50, height=4, font=self.font_size)
         self.sync_status_lbl.grid(column=0, row=6, columnspan=2, rowspan=2)
 
         # progress bar
-        self.progressbar = Progressbar(orient='horizontal', length=100, mode='determinate', style='text.Horizontal.TProgressbar')
+        self.progressbar = Progressbar(orient='horizontal', length=240, mode='determinate', style='text.Horizontal.TProgressbar')
         
     def usb_status_set(self, text):
         self.usb_status = text
@@ -170,22 +174,31 @@ class DataSyncer:
         self.root.after(NET_FREQ, self.search_net)
  
     def gui_update(self):
-        self.root.after(UPDATE_FREQ, self.update)
+        self.root.after(UPDATE_FREQ, self.status_update)
 
     def progressbar_update(self):
         self.root.after(PROG_FREQ, self.progressbar_calculator)
 
     def progressbar_calculator(self):
-        if self.get_status() == SYNCING and len(self.file_list) != 0:
-            self.progressbar.grid(column=1, row=12)
+        if self.get_status() == SYNCING:
+            self.progressbar.grid(column=0, row=12, columnspan=2)
             finish_size = 0
-            for key in self.file_list.keys():
-                path = os.path.join(self.sync_dst, key)
-                if os.path.exists(path):
-                    try:
-                        finish_size += self.get_size(path)
-                    except OSError:
-                        DataSyncer._logger.error('Unable to get size at {}'.format(path))
+            for key, folders in self.file_list.iteritems():
+                if 'bag' in self.file_list[key].values():
+                    path = os.path.join(self.sync_dst_bag, key)
+                    if os.path.exists(path):
+                        try:
+                            finish_size += self.get_size(path)
+                        except OSError:
+                            DataSyncer._logger.error('Unable to get size at {}'.format(path))
+                for data_folder, data_type in folders.iteritems():
+                    if data_type == 'dataset':
+                        path = os.path.join(self.sync_dst_dataset, data_folder)
+                        if os.path.exists(path):
+                            try:
+                                finish_size += self.get_size(path)
+                            except OSError:
+                                DataSyncer._logger.error('Unable to get size at {}'.format(path))
             val = finish_size * 1. / self.file_size * 100
             maximum = 100 
             self.prog_status_config(val, maximum, '{}/{}'.format(int(val), maximum))
@@ -213,21 +226,23 @@ class DataSyncer:
         self.stop_thread = threading.Thread(target=self.stop_sync)
         self.stop_thread.start()
 
-    def update(self):
+    def status_update(self):
         self.usb_status_config(self.usb_status)
         self.net_status_config(self.net_status)
         self.sync_status_config(self.sync_status)
         self.gui_update()
+        '''
         if self.sync_thread != None and self.sync_thread.isAlive() and self.get_status() in [SYNC_NOT_READY, SYNC_STOPPING]:
             self.sync_thread.join()
             DataSyncer._logger.info('sync thread joined!')
         if self.stop_thread != None and self.stop_thread.isAlive() and self.get_status() in [SYNC_NOT_READY]:
             self.stop_thread.join()
             DataSyncer._logger.info('stop thread joined!')
+        '''
 
     # check if usb is availble
     def search_usb(self):
-        dev_path = os.path.join('/media', self.user)
+        dev_path = os.path.join('/media', USER)
         dev_name = None
         try:
             devs = os.listdir(dev_path)
@@ -351,14 +366,14 @@ class DataSyncer:
             DataSyncer._logger.error(prompt + 'format should be YYYY-MM-DD')
             return False
         elif start_date > end_date:
-            self.sync_status_set(prompt + 'Start date later than end date')
-            DataSyncer._logger.error(prompt + 'Start date later than end date')
+            self.sync_status_set(prompt + 'start date later than end date')
+            DataSyncer._logger.error(prompt + 'start date later than end date')
             return False
         else:
             self.add_file_list(start_date, end_date)
             if len(self.file_list) == 0:
-                self.sync_status_set(prompt + 'No bag between these dates')
-                DataSyncer._logger.error(prompt + 'No bag between these dates')
+                self.sync_status_set(prompt + 'no bag between these dates')
+                DataSyncer._logger.error(prompt + 'no bag between these dates')
                 return False
             else:
                 return True
@@ -380,69 +395,78 @@ class DataSyncer:
         self.set_status(SYNCING)
         # generate dist path
         if sync_type == 'USB':
-            self.sync_dst_bag = os.path.join('/media', self.user, self.usb_model, 'import')
-            self.sync_dst_dateset = os.path.join('/media', self.user, self.usb_model, 'import')
+            self.sync_dst_bag = os.path.join('/media', USER, self.usb_model, 'import')
+            self.sync_dst_dataset = os.path.join('/media', USER, self.usb_model, 'import')
         else:
             self.sync_dst_bag = os.path.join(BAG_MOUNT_POINT, 'data_collection')
             self.sync_dst_dataset = DATASET_MOUNT_POINT
         try:
-            folders = os.listdir(self.sync_dst)
+            folders = os.listdir(self.sync_dst_bag)
         except OSError:
-            DataSyncer._logger.error('Unable to open file: {}'.format(self.sync_dst))
+            DataSyncer._logger.error('Unable to open file: {}'.format(self.sync_dst_bag))
             return
 
         # sanity check
-        self.sync_status_set('Sanity check..please wait')
+        self.sync_status_set('Sanity check...please wait')
         self.sanity_check()
+        DataSyncer._logger.info('Sanity check finished')
+        self.progressbar_update()
 
         # start to sync bag one by one
-        self.progressbar_update()
         for key, f_list in self.file_list.iteritems():
-            if key not in folders:
+            if key not in folders and 'bag' in f_list.values():
                 try:
-                    os.mkdir(os.path.join(self.sync_dst, key))
+                    os.mkdir(os.path.join(self.sync_dst_bag, key))
                 except OSError:
-                    self.set_status(SYNC_READY)
-                    DataSyncer._logger.error('Unable to create {} under {}'.format(key, self.sync_dst))
+                    self.set_status(SYNC_NOT_READY)
+                    DataSyncer._logger.error('Unable to create {} under {}'.format(key, self.sync_dst_bag))
                     return
             for f in f_list.keys():
                 if self.get_status() == SYNCING: 
                     self.sync_status_set('Syncing: ' + f)
                     cmd = ['rsync', '--progress', '-r', '--append']
                     cmd.append(os.path.join(SYNC_SRC, key, f))
-                    sync_dst = self.sync_dst_bag if f_list[f] == 'bag' else self.sync_dst_dataset
-                    cmd.append(os.path.join(sync_dst, key))
+                    sync_dst = os.path.join(self.sync_dst_bag, key) if f_list[f] == 'bag' else self.sync_dst_dataset
+                    cmd.append(sync_dst)
                     self.sync_proc = subprocess.Popen(cmd)
                     self.sync_proc.communicate()
                     if self.sync_proc.returncode not in [0, 20]:
                         self.sync_status_set('Syncing progress error code: {}'.format(self.sync_proc.returncode))
                         DataSyncer._logger.error('rsync progress error code: {}'.format(self.sync_proc.returncode))
 
-
-        # post deletion
-        self.post_delete()
-        self.progressbar.grid_forget()
+        if self.get_status() == EXIT:
+            DataSyncer._logger.info('exiting...')
+            return
 
         # reset status 
         if self.get_status() == SYNCING:
             self.set_status(SYNC_NOT_READY)
-            if self.sync_proc.returncode in [0, 20]:
+            if self.sync_proc.returncode == 0:
                 self.sync_status_set(sync_type + ' sync completed')
                 DataSyncer._logger.info(sync_type + ' sync completed')
-            self.search_usb_update()
-            self.search_net_update()
+
+        # post deletion
+        self.post_delete()
+        # restart update
+        self.search_usb_update()
+        self.search_net_update()
+        # forget progressbar
+        if len(self.progressbar.grid_info()) != 0:
+            self.progressbar.grid_forget()
+        DataSyncer._logger.info('syncing thread finished')
 
     # stop syncing
     def stop_sync(self):
         if self.sync_proc != None and self.sync_proc.poll() == None:
+            DataSyncer._logger.info('start stopping')
             self.sync_proc.terminate()
-            self.set_status(SYNC_STOPPING)
+            if self.get_status() != EXIT:
+                self.set_status(SYNC_NOT_READY)
             self.sync_proc.communicate()
+            DataSyncer._logger.info('returncode is: {}'.format(self.sync_proc.returncode))
             if self.sync_proc.returncode in [0, 20]:
                 self.sync_status_set('stop success')
-            self.search_usb_update()
-            self.search_net_update()
-            self.set_status(SYNC_NOT_READY)
+            DataSyncer._logger.info('stop syncing thread finished')
 
     # sanity check before syncing to avoid - matching the use of rsync --append
     def sanity_check(self):
@@ -450,11 +474,11 @@ class DataSyncer:
             for f in bag_folder.keys():
                 try:
                     # assumption: all files in destination must be included by those in source
-                    sync_dst = self.sync_dst_bag if bag_folder[f] == 'bag' else self.sync_dst_dataset
-                    items = os.listdir(os.path.join(sync_dst, key, f))
+                    sync_dst = os.path.join(self.sync_dst_bag, key, f) if bag_folder[f] == 'bag' else os.path.join(self.sync_dst_dataset, f)
+                    items = os.listdir(sync_dst)
                     for item in items:
                         src_path = os.path.join(SYNC_SRC, key, f, item)
-                        dst_path = os.path.join(self.sync_dst, key, f, item)
+                        dst_path = os.path.join(sync_dst, item)
                         if os.path.isfile(dst_path):
                             s_size = self.get_file_size(src_path)
                             d_size = self.get_file_size(dst_path)
@@ -477,8 +501,8 @@ class DataSyncer:
         for key, bag_folder in self.file_list.iteritems():
             for f in bag_folder.keys():
                 try:
-                    path = os.path.join(self.sync_dst, key, f)
                     if bag_folder[f] == 'bag':
+                        path = os.path.join(self.sync_dst_bag, key, f)
                         items = os.listdir(path)
                         for item in items:
                             if item.endswith('.active'):
@@ -491,16 +515,18 @@ class DataSyncer:
     def wait_thread(self):
         while True:
             if (self.sync_thread != None and self.sync_thread.isAlive()) or (self.stop_thread != None and self.stop_thread.isAlive()):
+                time.sleep(0.5)
                 continue
             else:
                 break
 
     # close window exit
     def exit(self):
+        self.set_status(EXIT)
         self.stop_sync()
-        self.wait_thread()
+        time.sleep(1)
         self.root.destroy()
-        sys.exit()
+        sys.exit(0)
 
     # get folder size in KB in general
     def get_size(self, path):
