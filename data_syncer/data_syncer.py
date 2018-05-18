@@ -14,10 +14,11 @@ import logging
 import logging.config
 from dataset_store import Dataset
 import time
+import math
 
 logging.config.fileConfig(os.path.join(os.path.expanduser("~"), '.data_syncer', 'ds_config.ini' ), disable_existing_loggers=False)
 SYNC_SRC = os.path.join(os.path.expanduser("~"), 'octopus_manager', 'bags')
-DEV_PRE = 'yuan'
+DEV_PRE = 'A235'
 NETWORK_IP = '10.162.1.4'
 DATASET_MOUNT_POINT = '/mnt/truenas/datasets/v2'
 BAG_MOUNT_POINT = '/mnt/truenas/scratch'
@@ -42,6 +43,7 @@ class DataSyncer:
         self.file_list = {}
         self.bag_num_thres = 4
         self.file_size = 0
+        self.finish_size = 0
         self.usb_model = None
         self._lock = threading.Lock() 
         self.sync_proc = None
@@ -53,6 +55,7 @@ class DataSyncer:
         self.usb_status = ''
         self.net_status = ''
         self.sync_status = ''
+        self.cur_time = 0 
 
         # GUI interface
         self.frame = Frame(self.root)
@@ -125,10 +128,13 @@ class DataSyncer:
 
         # sync status label
         self.sync_status_lbl = Label(text=self.sync_status, width=50, height=4, font=self.font_size)
-        self.sync_status_lbl.grid(column=0, row=6, columnspan=2, rowspan=2)
+        self.sync_status_lbl.grid(column=0, row=6, columnspan=2)
 
         # progress bar
         self.progressbar = Progressbar(orient='horizontal', length=240, mode='determinate', style='text.Horizontal.TProgressbar')
+
+        # time estimator
+        self.time_est = Label(height=3, font=self.font_size)
         
     def usb_status_set(self, text):
         self.usb_status = text
@@ -167,6 +173,14 @@ class DataSyncer:
         with self._lock:
             return self.status
 
+    def forget_progressbar(self):
+        self.cur_time = 0 
+        self.finish_size = 0 
+        if len(self.progressbar.grid_info()) != 0:
+            self.progressbar.grid_forget()
+        if len(self.time_est.grid_info()) != 0:
+            self.time_est.grid_forget()
+
     def search_usb_update(self):
         self.root.after(USB_FREQ, self.search_usb)
 
@@ -182,6 +196,7 @@ class DataSyncer:
     def progressbar_calculator(self):
         if self.get_status() == SYNCING:
             self.progressbar.grid(column=0, row=12, columnspan=2)
+            self.time_est.grid(column=0, row=13, columnspan=2)
             finish_size = 0
             for key, folders in self.file_list.iteritems():
                 if 'bag' in self.file_list[key].values():
@@ -199,9 +214,22 @@ class DataSyncer:
                                 finish_size += self.get_size(path)
                             except OSError:
                                 DataSyncer._logger.error('Unable to get size at {}'.format(path))
+            # calculate percent
             val = finish_size * 1. / self.file_size * 100
             maximum = 100 
             self.prog_status_config(val, maximum, '{}/{}'.format(int(val), maximum))
+            # calculate speed and estimated time
+            if self.cur_time == 0:
+                self.cur_time = time.time()
+            else:
+                t_diff = time.time() - self.cur_time 
+                self.cur_time = time.time()
+                s_diff = finish_size - self.finish_size
+                self.finish_size = finish_size
+                # speed in MB/s, t_diff in KB, needs to divide by 1024, time left in min
+                sync_speed = s_diff * 1. / t_diff if t_diff != 0 else 0 
+                time_left = int(math.ceil((self.file_size - self.finish_size) * 1. / sync_speed / 60) if sync_speed != 0 else 0) 
+                self.time_est.configure(text='Sync speed: {:.1f}MB/s, Estimate: {}min'.format(sync_speed/1024, time_left))
             self.progressbar_update()
 
     def start_button_click(self, sync_type):
@@ -248,10 +276,10 @@ class DataSyncer:
             devs = os.listdir(dev_path)
             for dev in devs:
                 _dev = dev.lower()
-                if DEV_PRE in _dev:
+                if DEV_PRE.lower() in _dev:
                     dev_name = dev
             if dev_name:
-                self.usb_status = 'USB detected: {}'.format(dev)
+                self.usb_status = dev 
             else:
                 self.usb_status = 'No USB found'
             self.usb_model = dev_name
@@ -450,9 +478,8 @@ class DataSyncer:
         # restart update
         self.search_usb_update()
         self.search_net_update()
-        # forget progressbar
-        if len(self.progressbar.grid_info()) != 0:
-            self.progressbar.grid_forget()
+        # forget progressbar and its related speed/time estimator
+        self.forget_progressbar()
         DataSyncer._logger.info('syncing thread finished')
 
     # stop syncing
@@ -524,7 +551,7 @@ class DataSyncer:
     def exit(self):
         self.set_status(EXIT)
         self.stop_sync()
-        time.sleep(1)
+        time.sleep(0.5)
         self.root.destroy()
         sys.exit(0)
 
